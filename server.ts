@@ -1,19 +1,28 @@
-// bun --hot websocket.js
+// bun --hot server.js
 
-import { serve, file } from "bun";
+import { serve, file, Server } from "bun";
 
-const onWebsocketMessage = (ws, msg) => {
-  ws.send(JSON.stringify({ date: Date.now() }));
+let numClients = 0;
+
+const onWebsocketOpen = (ws) => {
+  numClients++;
+  console.log("Clients", numClients);
+  ws.subscribe("code");
+};
+
+const onWebsocketClose = (ws) => {
+  numClients--;
+  console.log("Clients", numClients);
 };
 
 const onWebsocketConnect = (req: Request, server) => {
   if (server.upgrade(req)) {
     return new Response("", { status: 101 });
   }
+  return new Response("error", { status: 500 });
 };
 
-const onRequest = (req: Request, server) => {
-  console.log("Request", req.url);
+const onRequest = (req: Request, server: Server) => {
   if (req.url.endsWith("/ws")) {
     return onWebsocketConnect(req, server);
   } else if (req.url.endsWith("/js")) {
@@ -22,13 +31,22 @@ const onRequest = (req: Request, server) => {
   return new Response(file("index.html"));
 };
 
-serve({
-  port: 3000,
-  hostname: "localhost",
+const { HOST, PORT, CODE_DIR } = process.env;
 
+const server = serve({
+  port: PORT,
+  hostname: HOST,
   fetch: onRequest,
   websocket: {
-    message: onWebsocketMessage,
+    open: onWebsocketOpen,
+    close: onWebsocketClose,
   },
   development: true,
 });
+
+setInterval(() => {
+  server.publish("code", JSON.stringify(Date.now()));
+}, 1000);
+
+console.log(`Watching "${CODE_DIR}"`);
+console.log(`Listening on http://${HOST}:${PORT}/`);
