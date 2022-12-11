@@ -1,52 +1,34 @@
-// bun --hot server.js
+import "https://deno.land/x/dotenv@v3.2.0/load.ts";
+import * as files from "./files.ts";
+import { clear } from "https://deno.land/x/clear@v1.3.0/mod.ts";
+import { allFiles } from "./files.ts";
 
-import { serve, file, Server } from "bun";
+const codeDir = Deno.env.get("CODE_DIR") || "./";
+const enc = new TextEncoder();
 
-let numClients = 0;
-
-const onWebsocketOpen = (ws) => {
-  numClients++;
-  console.log("Clients", numClients);
-  ws.subscribe("code");
-};
-
-const onWebsocketClose = (ws) => {
-  numClients--;
-  console.log("Clients", numClients);
-};
-
-const onWebsocketConnect = (req: Request, server) => {
-  if (server.upgrade(req)) {
-    return new Response("", { status: 101 });
+const watcher = Deno.watchFs(codeDir);
+for await (const event of watcher) {
+  clear(true);
+  console.log(JSON.stringify(event));
+  for (const path of event.paths) {
+    let changes;
+    switch (event.kind) {
+      case "create":
+        changes = await files.onCreated(path);
+        break;
+      case "modify":
+        changes = await files.onModified(path);
+        break;
+      case "remove":
+        changes = files.onRemoved(path);
+        break;
+    }
+    console.log(changes);
+    for (const [file, { lines }] of allFiles.entries()) {
+      Deno.stdout.writeSync(enc.encode(`${file}\n`));
+      Deno.stdout.writeSync(
+        enc.encode(lines.map((l) => `  ${l}`).join("\n") + "\n\n")
+      );
+    }
   }
-  return new Response("error", { status: 500 });
-};
-
-const onRequest = (req: Request, server: Server) => {
-  if (req.url.endsWith("/ws")) {
-    return onWebsocketConnect(req, server);
-  } else if (req.url.endsWith("/js")) {
-    return new Response(file("main.js"));
-  }
-  return new Response(file("index.html"));
-};
-
-const { HOST, PORT, CODE_DIR } = process.env;
-
-const server = serve({
-  port: PORT,
-  hostname: HOST,
-  fetch: onRequest,
-  websocket: {
-    open: onWebsocketOpen,
-    close: onWebsocketClose,
-  },
-  development: true,
-});
-
-setInterval(() => {
-  server.publish("code", JSON.stringify(Date.now()));
-}, 1000);
-
-console.log(`Watching "${CODE_DIR}"`);
-console.log(`Listening on http://${HOST}:${PORT}/`);
+}
